@@ -29,7 +29,7 @@ class PoissonLikeGaussianLoss(nn.Module):
         variance = torch.clip(output, 0., None) + self.bias
         # loss is negative log probability under a gaussian with mean 'output' and variance 'output+bias', but with
         # output clipped so that variance is at least 'bias'
-        loss = 1/2*(output - target)**2 / variance + 1/2*torch.log(variance).sum()
+        loss = 1/2*(output - target)**2 / variance + 1/2*torch.log(variance)
         if not self.per_neuron:
             return loss.mean() if self.avg else loss.sum()
         else:

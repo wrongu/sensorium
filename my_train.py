@@ -6,11 +6,17 @@ from pathlib import Path
 from sensorium.datasets import static_loaders as loader_builder
 from sensorium.models import stacked_core_full_gauss_readout as model_builder
 from sensorium.training import standard_trainer as trainer
+import argparse
 
 warnings.filterwarnings('ignore')
 
-MODEL_NAME = 'sota_model'
-SEED = 18913674  # chosen by keyboard-mashing
+parser = argparse.ArgumentParser()
+parser.add_argument("--epochs", default=200)
+parser.add_argument("--tikhanov-readout-by-xyz", default=0., type=float)
+parser.add_argument("--loss", default="PoissonLoss", type=str, choices=["PoissonLoss", "PoissonLikeGaussianLoss"])
+parser.add_argument("--seed", default=18913674, type=int)
+parser.add_argument("--model-name", default="baseline", type=str)
+args = parser.parse_args()
 
 # NOTE: using any other cuda device is tricky. The dataloaders call x.cuda() on the data, but this always defaults to
 # cuda:0 unless some other environment config is done
@@ -20,27 +26,30 @@ MICE = ["21067-10-18", "23964-4-22", "22846-10-16", "26872-17-20", "23343-5-17",
 
 filenames = [f"notebooks/data/static{m}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6.zip" for m in MICE]
 
-print("Loading distance metadata...")
-# Construct dict of mouse: pairwise distances between neurons
-def pairwise_neuron_dist(mouse_id):
-    data_root = Path(f"notebooks/data/static{mouse_id}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6")
-    coords_file = data_root  / "meta" / "neurons" / "cell_motor_coordinates.npy"
-    coordinates_xyz = torch.tensor(np.load(str(coords_file.resolve())), device=DEVICE)
-    diff_dist = coordinates_xyz[:, None, :] - coordinates_xyz[None, :, :]
-    euclidean_dist = torch.sqrt(torch.sum(diff_dist**2, dim=-1))
-    return euclidean_dist
-pairwise_neuron_distances = {m: pairwise_neuron_dist(m) for m in MICE}
+pairwise_neuron_similarities = {}
+if args.tikhanov_readout_by_xyz > 0:
+    print("Loading distance metadata...")
+    # Construct dict of mouse: pairwise distances between neurons
+    def pairwise_neuron_dist(mouse_id):
+        data_root = Path(f"notebooks/data/static{mouse_id}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6")
+        coords_file = data_root  / "meta" / "neurons" / "cell_motor_coordinates.npy"
+        coordinates_xyz = torch.tensor(np.load(str(coords_file.resolve())), device=DEVICE)
+        diff_dist = coordinates_xyz[:, None, :] - coordinates_xyz[None, :, :]
+        euclidean_dist = torch.sqrt(torch.sum(diff_dist**2, dim=-1))
+        return euclidean_dist
+    pairwise_neuron_distances = {m: pairwise_neuron_dist(m) for m in MICE}
 
-# Now convert pairwise distances into a scaled similarity score for each pair of neurons. This score will penalize
-# differences-in-weights.
-def dist2reg(distances, tau=None, scale=1e-1):
-    # default lenght scale to median of pairwise distances
-    if tau is None:
-        i, j = torch.triu_indices(*distances.shape, offset=1)
-        tau = torch.median(distances[i, j])
-    return scale * torch.exp(-distances / tau)
+    # Now convert pairwise distances into a scaled similarity score for each pair of neurons. This score will penalize
+    # differences-in-weights.
+    def dist2reg(distances, tau=None, scale=1e-1):
+        # default lenght scale to median of pairwise distances
+        if tau is None:
+            i, j = torch.triu_indices(*distances.shape, offset=1)
+            tau = torch.median(distances[i, j])
+        return scale * torch.exp(-distances / tau)
 
-pairwise_neuron_similarities = {k: dist2reg(dist) for k, dist in pairwise_neuron_distances.items()}
+    pairwise_neuron_similarities = {k: dist2reg(dist, scale=args.tikhanov_readout_by_xyz)
+                                    for k, dist in pairwise_neuron_distances.items()}
 
 
 print("Creating dataloaders...")
@@ -53,7 +62,7 @@ dataloaders = loader_builder(paths=filenames,
 
 print("Creating model...")
 model = model_builder(dataloaders=dataloaders,
-                      seed=SEED,
+                      seed=args.seed,
                       pad_input=False,
                       stack=-1,
                       layers=4,
@@ -73,15 +82,15 @@ model = model_builder(dataloaders=dataloaders,
                       init_mu_range=0.3,
                       gauss_type='full',
                       shifter=True,
-                      spatial_similarity=pairwise_neuron_similarities)
+                      spatial_similarity=pairwise_neuron_similarities if args.tikhanov_readout_by_xyz > 0 else None)
 
 print("Training...")
 validation_score, trainer_output, state_dict = trainer(
-    loss_function="PoissonLikeGaussianLoss",
+    loss_function=args.loss,
     model=model,
     dataloaders=dataloaders,
-    seed=SEED,
-    max_iter=200,
+    seed=args.seed,
+    max_iter=args.epochs,
     verbose=True,
     track_training=True,
     lr_decay_steps=4,
@@ -90,4 +99,9 @@ validation_score, trainer_output, state_dict = trainer(
     device=DEVICE)
 
 print("Saving...")
-torch.save(model.state_dict(), f'./model_checkpoints/sensorium_p_{MODEL_NAME}_{SEED}.pth')
+save_file = Path(f'./model_checkpoints/sensorium_p_{args.model_name}_{args.seed}.pth')
+i = 1
+while save_file.exists():
+    save_file = Path(f'./model_checkpoints/sensorium_p_{args.model_name}_{args.seed}_{i}.pth')
+    i += 1
+torch.save(model.state_dict(), str(save_file))

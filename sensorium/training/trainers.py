@@ -3,7 +3,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from neuralpredictors.measures import modules
+import losses as modules
 from neuralpredictors.training import (
     early_stopping,
     MultipleObjectiveTracker,

@@ -51,6 +51,7 @@ model = model_builder(dataloaders=dataloaders,
 
 print("Training...")
 validation_score, trainer_output, state_dict = trainer(
+    loss_function="PoissonLikeGaussianLoss",
     model=model,
     dataloaders=dataloaders,
     seed=SEED,

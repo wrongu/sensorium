@@ -11,11 +11,12 @@ import argparse
 warnings.filterwarnings('ignore')
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--epochs", default=200)
+parser.add_argument("--epochs", default=200, type=int)
 parser.add_argument("--tikhanov-readout-by-xyz", default=0., type=float)
 parser.add_argument("--loss", default="PoissonLoss", type=str, choices=["PoissonLoss", "PoissonLikeGaussianLoss"])
 parser.add_argument("--seed", default=18913674, type=int)
 parser.add_argument("--model-name", default="baseline", type=str)
+parser.add_argument("--init-model", default=None)
 args = parser.parse_args()
 
 # NOTE: using any other cuda device is tricky. The dataloaders call x.cuda() on the data, but this always defaults to
@@ -83,6 +84,11 @@ model = model_builder(dataloaders=dataloaders,
                       gauss_type='full',
                       shifter=True,
                       spatial_similarity=pairwise_neuron_similarities if args.tikhanov_readout_by_xyz > 0 else None)
+
+if args.init_model is not None:
+    print("Attempting to restore model from existing checkpoint...")
+    data = torch.load(args.init_model)
+    model.load_state_dict(data)
 
 print("Training...")
 validation_score, trainer_output, state_dict = trainer(

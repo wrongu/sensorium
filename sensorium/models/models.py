@@ -51,6 +51,7 @@ def stacked_core_full_gauss_readout(
     shifter_bias=True,
     hidden_padding=None,
     core_bias=False,
+    spatial_similarity=None,
 ):
     """
     Model class of a stacked2dCore (from neuralpredictors) and a pointpooled (spatial transformer) readout
@@ -140,6 +141,7 @@ def stacked_core_full_gauss_readout(
         grid_mean_predictor=grid_mean_predictor,
         grid_mean_predictor_type=grid_mean_predictor_type,
         source_grids=source_grids,
+        spatial_similarity=spatial_similarity,
     )
 
     if shifter is True:

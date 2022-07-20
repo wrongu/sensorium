@@ -1,5 +1,7 @@
 import torch
+import numpy as np
 import warnings
+from pathlib import Path
 # pick dataset loader, model, and trainer by importing one
 from sensorium.datasets import static_loaders as loader_builder
 from sensorium.models import stacked_core_full_gauss_readout as model_builder
@@ -17,6 +19,29 @@ DEVICE = 'cuda:0'
 MICE = ["21067-10-18", "23964-4-22", "22846-10-16", "26872-17-20", "23343-5-17", "27204-5-13", "23656-14-22"]
 
 filenames = [f"notebooks/data/static{m}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6.zip" for m in MICE]
+
+print("Loading distance metadata...")
+# Construct dict of mouse: pairwise distances between neurons
+def pairwise_neuron_dist(mouse_id):
+    data_root = Path(f"notebooks/data/static{mouse_id}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6")
+    coords_file = data_root  / "meta" / "neurons" / "cell_motor_coordinates.npy"
+    coordinates_xyz = torch.tensor(np.load(str(coords_file.resolve())), device=DEVICE)
+    diff_dist = coordinates_xyz[:, None, :] - coordinates_xyz[None, :, :]
+    euclidean_dist = torch.sqrt(torch.sum(diff_dist**2, dim=-1))
+    return euclidean_dist
+pairwise_neuron_distances = {m: pairwise_neuron_dist(m) for m in MICE}
+
+# Now convert pairwise distances into a scaled similarity score for each pair of neurons. This score will penalize
+# differences-in-weights.
+def dist2reg(distances, tau=None, scale=1e-1):
+    # default lenght scale to median of pairwise distances
+    if tau is None:
+        i, j = torch.triu_indices(*distances.shape, offset=1)
+        tau = torch.median(distances[i, j])
+    return scale * torch.exp(-distances / tau)
+
+pairwise_neuron_similarities = {k: dist2reg(dist) for k, dist in pairwise_neuron_distances.items()}
+
 
 print("Creating dataloaders...")
 dataloaders = loader_builder(paths=filenames,
@@ -47,7 +72,8 @@ model = model_builder(dataloaders=dataloaders,
                       init_sigma=0.1,
                       init_mu_range=0.3,
                       gauss_type='full',
-                      shifter=True)
+                      shifter=True,
+                      spatial_similarity=pairwise_neuron_similarities)
 
 print("Training...")
 validation_score, trainer_output, state_dict = trainer(

@@ -17,11 +17,13 @@ parser.add_argument("--loss", default="PoissonLoss", type=str, choices=["Poisson
 parser.add_argument("--seed", default=18913674, type=int)
 parser.add_argument("--model-name", default="baseline", type=str)
 parser.add_argument("--init-model", default=None)
+parser.add_argument("--device", default="cuda:0")
 args = parser.parse_args()
 
-# NOTE: using any other cuda device is tricky. The dataloaders call x.cuda() on the data, but this always defaults to
-# cuda:0 unless some other environment config is done
-DEVICE = 'cuda:0'
+if args.device.startswith("cuda:"):
+    # inside the sensorium package, there are various calls to x.cuda() without specifying a number. Ensure that
+    # devices match here by setting the default cuda device number for all of torch.
+    torch.cuda.set_device(int(args.device[-1]))
 
 MICE = ["21067-10-18", "23964-4-22", "22846-10-16", "26872-17-20", "23343-5-17", "27204-5-13", "23656-14-22"]
 
@@ -34,7 +36,7 @@ if args.tikhanov_readout_by_xyz > 0:
     def pairwise_neuron_dist(mouse_id):
         data_root = Path(f"notebooks/data/static{mouse_id}-GrayImageNet-94c6ff995dac583098847cfecd43e7b6")
         coords_file = data_root  / "meta" / "neurons" / "cell_motor_coordinates.npy"
-        coordinates_xyz = torch.tensor(np.load(str(coords_file.resolve())), device=DEVICE)
+        coordinates_xyz = torch.tensor(np.load(str(coords_file.resolve())), device=args.device)
         diff_dist = coordinates_xyz[:, None, :] - coordinates_xyz[None, :, :]
         euclidean_dist = torch.sqrt(torch.sum(diff_dist**2, dim=-1))
         return euclidean_dist
@@ -102,7 +104,7 @@ validation_score, trainer_output, state_dict = trainer(
     lr_decay_steps=4,
     avg_loss=False,
     lr_init=0.009,
-    device=DEVICE)
+    device=args.device)
 
 print("Saving...")
 save_file = Path(f'./model_checkpoints/sensorium_p_{args.model_name}_{args.seed}.pth')
